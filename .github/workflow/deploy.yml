@@ -1,0 +1,141 @@
+
+name: Deploy To-Do Cloud to Azure
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to ActividadNube
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    env:
+      AZURE_HOST: ${{ secrets.AZURE_HOST }}
+      AZURE_USER: ${{ secrets.AZURE_USER }}
+      DEPLOY_PATH: /home/azureuser/CommitNube
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar conexion SSH
+        env:
+          AZURE_SSH_KEY: ${{ secrets.AZURE_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "$AZURE_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+          ssh-keyscan -H "$AZURE_HOST" >> ~/.ssh/known_hosts
+
+      - name: Transferir proyecto a Azure
+        run: |
+          tar \
+            --exclude='./.git' \
+            --exclude='./.env' \
+            -czf - . | ssh \
+            -i ~/.ssh/id_ed25519 \
+            "$AZURE_USER@$AZURE_HOST" \
+            "mkdir -p '$DEPLOY_PATH' && tar -xzf - -C '$DEPLOY_PATH'"
+
+      - name: Configurar variables de entorno
+        env:
+          DB_ROOT_PASSWORD: ${{ secrets.DB_ROOT_PASSWORD }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          test -n "$DB_ROOT_PASSWORD"
+          test -n "$DB_PASSWORD"
+
+          ENV_B64=$(printf \
+            'DB_ROOT_PASSWORD=%s\nDB_PASSWORD=%s\nAPP_VERSION=%s\n' \
+            "$DB_ROOT_PASSWORD" \
+            "$DB_PASSWORD" \
+            "$GITHUB_SHA" | base64 -w 0)
+
+          ssh -i ~/.ssh/id_ed25519 \
+            "$AZURE_USER@$AZURE_HOST" \
+            "printf '%s' '$ENV_B64' | base64 -d > '$DEPLOY_PATH/.env' && chmod 600 '$DEPLOY_PATH/.env'"
+
+      - name: Construir y desplegar contenedores
+        run: |
+          ssh -i ~/.ssh/id_ed25519 \
+            "$AZURE_USER@$AZURE_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' bash -s" <<'REMOTE'
+              set -e
+
+              cd "$DEPLOY_PATH"
+
+              docker compose config -q
+
+              docker compose up -d --build --remove-orphans
+
+              echo "Esperando servicios saludables..."
+
+              for container in todo_db todo_web; do
+                status=""
+
+                for attempt in $(seq 1 30); do
+                  status=$(docker inspect \
+                    --format='{{.State.Health.Status}}' \
+                    "$container" 2>/dev/null || true)
+
+                  if [ "$status" = "healthy" ]; then
+                    break
+                  fi
+
+                  sleep 2
+                done
+
+                if [ "$status" != "healthy" ]; then
+                  echo "ERROR: $container no esta saludable"
+                  docker compose ps
+                  docker compose logs --tail=50
+                  exit 1
+                fi
+
+                echo "$container esta saludable"
+              done
+
+              docker compose ps
+          REMOTE
+
+      - name: Verificar aplicacion web
+        run: |
+          URL="http://${AZURE_HOST}:8000"
+          response=""
+
+          for attempt in $(seq 1 12); do
+            if response=$(curl -fsS --max-time 10 "$URL"); then
+              break
+            fi
+
+            echo "Esperando respuesta de la aplicacion..."
+            sleep 5
+          done
+
+          if [ -z "$response" ]; then
+            echo "ERROR: La aplicacion no responde"
+            exit 1
+          fi
+
+          if ! printf '%s' "$response" | grep -Fq "$GITHUB_SHA"; then
+            echo "ERROR: El commit desplegado no coincide"
+            exit 1
+          fi
+
+          echo "Despliegue exitoso"
+          echo "Commit: $GITHUB_SHA"
+          echo "URL: $URL"
