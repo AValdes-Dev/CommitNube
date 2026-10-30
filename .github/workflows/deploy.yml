@@ -56,9 +56,6 @@ jobs:
           DB_ROOT_PASSWORD: ${{ secrets.DB_ROOT_PASSWORD }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
-          test -n "$DB_ROOT_PASSWORD"
-          test -n "$DB_PASSWORD"
-
           ENV_B64=$(printf \
             'DB_ROOT_PASSWORD=%s\nDB_PASSWORD=%s\nAPP_VERSION=%s\n' \
             "$DB_ROOT_PASSWORD" \
