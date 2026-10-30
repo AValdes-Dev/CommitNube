@@ -4,15 +4,13 @@ services:
     container_name: todo_db
     restart: always
     environment:
-      MARIADB_ROOT_PASSWORD: root_password_secreto
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
       MARIADB_DATABASE: todo_cloud
       MARIADB_USER: todo_user
-      MARIADB_PASSWORD: todo_password_secreto
-    ports:
-      - "3306:3306"
+      MARIADB_PASSWORD: ${DB_PASSWORD}
     volumes:
       - mariadb_data:/var/lib/mysql
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
@@ -21,18 +19,20 @@ services:
       start_period: 5s
 
   web:
-    build: .
+    build:
+      context: ./app
+      dockerfile: Dockerfile
     container_name: todo_web
     restart: always
     ports:
       - "8000:80"
     environment:
-      - DB_HOST=db
-      - DB_PORT=3306
-      - DB_NAME=todo_cloud
-      - DB_USER=todo_user
-      - DB_PASSWORD=todo_password_secreto
-      - APP_VERSION=1.0.0
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: todo_cloud
+      DB_USER: todo_user
+      DB_PASSWORD: ${DB_PASSWORD}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
     depends_on:
       db:
         condition: service_healthy
