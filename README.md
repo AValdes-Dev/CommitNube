@@ -1,4 +1,10 @@
 # CommitNube
+integrantes:
+alexander medina
+alexander valdes
+luis quiroga
+alvaro quiroga
+matias sanchez(ayudante)
 Introducción:
 El presente documento describe la infraestructura tecnológica utilizada para ejecutar y desplegar la aplicación. Se detallan los componentes principales de la solución, incluyendo Dockerfile, Docker-Compose, GitHub Actions, los Secrets de GitHub, la base de datos y la máquina virtual alojada en Microsoft Azure.
 
